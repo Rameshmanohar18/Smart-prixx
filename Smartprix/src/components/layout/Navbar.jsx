@@ -1,14 +1,252 @@
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import {
   Search, ChevronDown, User, Bell, Heart, List,
   AlertCircle, Settings, Globe, X, Menu,
-  Smartphone, Mail, Newspaper, BarChart2,
+  Smartphone, Mail, Newspaper, BarChart2, TrendingUp,
 } from 'lucide-react'
 import { logout, selectUser } from '../../store/authSlice'
 import { selectCompare } from '../../store/compareSlice'
+
+// ─── Trending / recent search suggestions (mock data) ────────────────────────
+const TRENDING_SUGGESTIONS = [
+  'iphone 17',
+  'oneplus nord 6',
+  'vivo v/0',
+  'vivo',
+  'nothing phone 4a',
+  'google pixel',
+  'motorola edge 70 fusion',
+  'vivo t5x',
+  'samsung galaxy s26 ultra',
+]
+
+// One featured product suggestion shown at top when query matches
+const FEATURED_PRODUCTS = [
+  {
+    id: 'fp1',
+    name: 'Dell P3225QE 32-Inch 4K Ultra HD (3840x2160) 100Hz Monitor, 5 ms, Built in USB Hub',
+    slug: 'dell-p3225qe-monitor',
+    image: 'https://images.unsplash.com/photo-1593640408182-31c228b2b7e8?w=60&q=80',
+    keywords: ['dell', 'monitor', 'p3225', '4k', 'usb hub'],
+  },
+  {
+    id: 'fp2',
+    name: 'Samsung Galaxy S26 Ultra 5G (12GB RAM, 256GB)',
+    slug: 'samsung-galaxy-s26-ultra',
+    image: 'https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=60&q=80',
+    keywords: ['samsung', 'galaxy', 's26', 'ultra'],
+  },
+  {
+    id: 'fp3',
+    name: 'Apple iPhone 17 Pro Max (256GB) - Natural Titanium',
+    slug: 'apple-iphone-17-pro-max',
+    image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=60&q=80',
+    keywords: ['iphone', 'apple', 'iphone 17', 'iphone17'],
+  },
+  {
+    id: 'fp4',
+    name: 'OnePlus Nord CE6 5G (8GB RAM, 128GB) - Slate Grey',
+    slug: 'oneplus-nord-ce6',
+    image: 'https://images.unsplash.com/photo-1574944985070-8f3ebc6b79d2?w=60&q=80',
+    keywords: ['oneplus', 'nord', 'nord ce6', 'oneplus nord'],
+  },
+]
+
+// ─── SearchBar with autocomplete ──────────────────────────────────────────────
+function SearchBar() {
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
+  const [focused, setFocused] = useState(false)
+  const [suggestions, setSuggestions] = useState([])
+  const [featuredProduct, setFeaturedProduct] = useState(null)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const inputRef = useRef(null)
+  const containerRef = useRef(null)
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setFocused(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Filter suggestions on query change
+  const updateSuggestions = useCallback((q) => {
+    const trimmed = q.trim().toLowerCase()
+    if (!trimmed) {
+      // Show all trending when empty but focused
+      setSuggestions(TRENDING_SUGGESTIONS)
+      setFeaturedProduct(null)
+      return
+    }
+    // Filter trending suggestions
+    const filtered = TRENDING_SUGGESTIONS.filter((s) =>
+      s.toLowerCase().includes(trimmed)
+    )
+    // If no match, show all trending
+    setSuggestions(filtered.length > 0 ? filtered : TRENDING_SUGGESTIONS.slice(0, 6))
+
+    // Find a featured product match
+    const matched = FEATURED_PRODUCTS.find((p) =>
+      p.keywords.some((k) => k.includes(trimmed) || trimmed.includes(k))
+    )
+    setFeaturedProduct(matched || null)
+  }, [])
+
+  const handleChange = (e) => {
+    const val = e.target.value
+    setQuery(val)
+    setActiveIndex(-1)
+    updateSuggestions(val)
+  }
+
+  const handleFocus = () => {
+    setFocused(true)
+    updateSuggestions(query)
+  }
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (query.trim()) {
+      setFocused(false)
+      navigate(`/search?q=${encodeURIComponent(query.trim())}`)
+    }
+  }
+
+  const handleSuggestionClick = (suggestion) => {
+    setQuery(suggestion)
+    setFocused(false)
+    navigate(`/search?q=${encodeURIComponent(suggestion)}`)
+  }
+
+  const handleKeyDown = (e) => {
+    const total = (featuredProduct ? 1 : 0) + suggestions.length
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex((i) => Math.min(i + 1, total - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex((i) => Math.max(i - 1, -1))
+    } else if (e.key === 'Escape') {
+      setFocused(false)
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault()
+      const offset = featuredProduct ? 1 : 0
+      if (featuredProduct && activeIndex === 0) {
+        navigate(`/product/${featuredProduct.slug}`)
+      } else {
+        handleSuggestionClick(suggestions[activeIndex - offset])
+      }
+      setFocused(false)
+    }
+  }
+
+  const showDropdown = focused && (featuredProduct || suggestions.length > 0)
+
+  return (
+    <div ref={containerRef} className="relative flex-1 max-w-[420px] hidden sm:block">
+      <form onSubmit={handleSubmit}>
+        <div className={`flex w-full bg-white h-9 overflow-hidden transition-all ${
+          showDropdown
+            ? 'rounded-t border border-gray-300 border-b-transparent'
+            : 'rounded border border-gray-300'
+        }`}>
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={handleChange}
+            onFocus={handleFocus}
+            onKeyDown={handleKeyDown}
+            placeholder="Search for products, brands & more"
+            className="flex-1 px-3 text-sm text-gray-800 outline-none bg-transparent placeholder-gray-400"
+            autoComplete="off"
+          />
+          <button
+            type="submit"
+            className="px-3 text-gray-400 hover:text-blue-600 border-l border-gray-200 bg-white transition-colors flex-shrink-0"
+            aria-label="Search"
+          >
+            <Search size={17} />
+          </button>
+        </div>
+      </form>
+
+      {/* ── Autocomplete dropdown ── */}
+      {showDropdown && (
+        <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 border-t-0 rounded-b shadow-lg z-[60] overflow-hidden">
+
+          {/* Featured product result — shown at top */}
+          {featuredProduct && (
+            <Link
+              to={`/product/${featuredProduct.slug}`}
+              onClick={() => setFocused(false)}
+              className={`flex items-center gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                activeIndex === 0 ? 'bg-gray-50' : ''
+              }`}
+            >
+              <img
+                src={featuredProduct.image}
+                alt={featuredProduct.name}
+                className="w-10 h-10 object-contain rounded flex-shrink-0 bg-gray-50"
+              />
+              <span className="text-sm text-gray-800 line-clamp-2 leading-snug">
+                {featuredProduct.name}
+              </span>
+            </Link>
+          )}
+
+          {/* Trending search suggestions */}
+          <ul>
+            {suggestions.map((suggestion, idx) => {
+              const offset = featuredProduct ? 1 : 0
+              const isActive = activeIndex === idx + offset
+              // Highlight matching part of suggestion
+              const lq = query.trim().toLowerCase()
+              let display
+              if (lq && suggestion.toLowerCase().includes(lq)) {
+                const start = suggestion.toLowerCase().indexOf(lq)
+                display = (
+                  <>
+                    <span className="font-semibold text-gray-900">
+                      {suggestion.slice(0, start)}
+                    </span>
+                    <span className="text-gray-500">{suggestion.slice(start)}</span>
+                  </>
+                )
+              } else {
+                display = <span className="text-gray-700">{suggestion}</span>
+              }
+
+              return (
+                <li key={suggestion}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); handleSuggestionClick(suggestion) }}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-gray-50 transition-colors ${
+                      isActive ? 'bg-gray-50' : ''
+                    }`}
+                  >
+                    {/* Trending arrow icon — matches the ↗ in screenshot */}
+                    <TrendingUp size={14} className="text-gray-400 flex-shrink-0" />
+                    <span className="flex-1">{display}</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Brand SVG Icons ──────────────────────────────────────────────────────────
 
@@ -448,13 +686,14 @@ export default function Navbar() {
   const user = useSelector(selectUser)
   const compareItems = useSelector(selectCompare)
 
-  const [searchQuery, setSearchQuery] = useState('')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [mobileQuery, setMobileQuery] = useState('')
 
-  const handleSearch = (e) => {
+  const handleMobileSearch = (e) => {
     e.preventDefault()
-    if (searchQuery.trim()) {
-      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
+    if (mobileQuery.trim()) {
+      navigate(`/search?q=${encodeURIComponent(mobileQuery.trim())}`)
+      setMobileMenuOpen(false)
     }
   }
 
@@ -482,23 +721,7 @@ export default function Navbar() {
           </Link>
 
           {/* Search bar */}
-          <form onSubmit={handleSearch} className="flex-1 max-w-[380px] hidden sm:flex">
-            <div className="flex w-full rounded overflow-hidden border border-gray-300 bg-white h-9">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search with Smartprix"
-                className="flex-1 px-3 text-sm text-gray-800 outline-none"
-              />
-              <button
-                type="submit"
-                className="px-3 text-gray-400 hover:text-blue-600 border-l border-gray-200 bg-white"
-              >
-                <Search size={17} />
-              </button>
-            </div>
-          </form>
+          <SearchBar />
 
           {/* Amazon promo */}
           <div className="hidden lg:flex items-center bg-[#febd69] rounded px-3 py-1.5 whitespace-nowrap ml-2">
@@ -642,13 +865,13 @@ export default function Navbar() {
         <div className="sm:hidden bg-[#1a3c6e] border-t border-blue-800">
           {/* Mobile search */}
           <div className="px-4 py-3">
-            <form onSubmit={(e) => { handleSearch(e); setMobileMenuOpen(false) }}>
+            <form onSubmit={handleMobileSearch}>
               <div className="flex w-full rounded overflow-hidden border border-gray-300 bg-white h-9">
                 <input
                   type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search with Smartprix"
+                  value={mobileQuery}
+                  onChange={(e) => setMobileQuery(e.target.value)}
+                  placeholder="Search for products, brands & more"
                   className="flex-1 px-3 text-sm text-gray-800 outline-none"
                 />
                 <button type="submit" className="px-3 text-gray-400 border-l border-gray-200 bg-white">
